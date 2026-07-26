@@ -4,14 +4,18 @@ Generates normalized vector embeddings for FAISS indexing and semantic similarit
 """
 
 from abc import ABC, abstractmethod
+import os
 import logging
-from typing import List, Optional
+import threading
+from typing import Any, List, Optional
 import numpy as np
-from sentence_transformers import SentenceTransformer
 
 from app.core.config import settings
 
 logger = logging.getLogger(__name__)
+
+_model_lock = threading.Lock()
+_service_instance_lock = threading.Lock()
 
 
 class BaseEmbeddingService(ABC):
@@ -45,38 +49,57 @@ class BaseEmbeddingService(ABC):
 
 class EmbeddingService(BaseEmbeddingService):
     """
-    Singleton SentenceTransformers embedding model client with lazy loading.
+    Singleton SentenceTransformers embedding model client with thread-safe lazy loading.
     """
 
     _instance: Optional["EmbeddingService"] = None
-    _model: Optional[SentenceTransformer] = None
+    _model: Optional[Any] = None
     _dimension: Optional[int] = None
 
     def __new__(cls) -> "EmbeddingService":
         if cls._instance is None:
-            cls._instance = super().__new__(cls)
-            cls._instance._model = None
-            cls._instance._dimension = None
+            with _service_instance_lock:
+                if cls._instance is None:
+                    cls._instance = super().__new__(cls)
+                    cls._instance._model = None
+                    cls._instance._dimension = None
         return cls._instance
 
-    def _get_model(self) -> SentenceTransformer:
+    def _get_model(self) -> Any:
         """
-        Lazily loads and caches the SentenceTransformer model instance.
+        Lazily loads and caches the SentenceTransformer model instance using thread-safe locking.
         """
         if self._model is None:
-            model_name = settings.EMBEDDING_MODEL_NAME
-            logger.info(f"Loading SentenceTransformer embedding model: '{model_name}'...")
-            try:
-                self._model = SentenceTransformer(model_name)
-                # Compute sample embedding to determine vector dimension
-                sample_emb = self._model.encode("test", normalize_embeddings=True)
-                self._dimension = len(sample_emb)
-                logger.info(
-                    f"Successfully loaded embedding model '{model_name}' (dimension={self._dimension})."
-                )
-            except Exception as e:
-                logger.error(f"Failed to load embedding model '{model_name}': {e}", exc_info=True)
-                raise RuntimeError(f"Could not load SentenceTransformer model '{model_name}': {str(e)}") from e
+            with _model_lock:
+                if self._model is None:
+                    # Enforce single-threaded PyTorch allocations to minimize memory footprint on Render
+                    os.environ["OMP_NUM_THREADS"] = "1"
+                    os.environ["MKL_NUM_THREADS"] = "1"
+                    os.environ["TORCH_NUM_THREADS"] = "1"
+
+                    from sentence_transformers import SentenceTransformer
+                    import torch
+
+                    try:
+                        torch.set_num_threads(1)
+                        if hasattr(torch, "set_num_interop_threads"):
+                            torch.set_num_interop_threads(1)
+                    except Exception:
+                        pass
+
+                    model_name = settings.EMBEDDING_MODEL_NAME
+                    logger.info(f"Loading SentenceTransformer embedding model: '{model_name}'...")
+                    try:
+                        self._model = SentenceTransformer(model_name)
+                        # Compute sample embedding to determine vector dimension
+                        sample_emb = self._model.encode("test", normalize_embeddings=True)
+                        self._dimension = len(sample_emb)
+                        logger.info(
+                            f"Successfully loaded embedding model '{model_name}' (dimension={self._dimension})."
+                        )
+                    except Exception as e:
+                        logger.error(f"Failed to load embedding model '{model_name}': {e}", exc_info=True)
+                        raise RuntimeError(f"Could not load SentenceTransformer model '{model_name}': {str(e)}") from e
 
         return self._model
 
