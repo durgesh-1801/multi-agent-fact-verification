@@ -4,11 +4,13 @@ Provides in-memory vector storage, indexing, and similarity search for precomput
 """
 
 import logging
+import threading
 from typing import Any, Dict, List, Optional
-import faiss
 import numpy as np
 
 logger = logging.getLogger(__name__)
+
+_faiss_service_lock = threading.Lock()
 
 
 class FAISSIndexContainer:
@@ -17,6 +19,8 @@ class FAISSIndexContainer:
     """
 
     def __init__(self, dimension: int):
+        import faiss
+
         self.dimension = dimension
         # Using IndexFlatIP (Inner Product) for normalized unit vector cosine similarity
         self.index = faiss.IndexFlatIP(dimension)
@@ -62,8 +66,10 @@ class FAISSService:
 
     def __new__(cls) -> "FAISSService":
         if cls._instance is None:
-            cls._instance = super().__new__(cls)
-            cls._instance._indexes = {}
+            with _faiss_service_lock:
+                if cls._instance is None:
+                    cls._instance = super().__new__(cls)
+                    cls._instance._indexes = {}
         return cls._instance
 
     def create_index(self, index_id: str, dimension: int) -> None:
