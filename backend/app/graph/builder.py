@@ -5,17 +5,16 @@ Wires the 5 agents (Claim Extractor, Search Retriever, Fact Verifier, Contradict
 
 from datetime import datetime, timezone
 import logging
-from typing import Any, Dict, List
+import threading
+from typing import Any, Dict, List, Optional
 from langgraph.graph import StateGraph, START, END
 
 from app.graph.state import AgentState, Claim
-from app.agents.claim_extractor import extract_claims
-from app.agents.search_retriever import retrieve_and_index_evidence
-from app.agents.fact_verifier import verify_claim
-from app.agents.contradiction_detector import detect_contradictions
-from app.agents.report_generator import generate_report
 
 logger = logging.getLogger(__name__)
+
+_graph_lock = threading.Lock()
+_compiled_graph: Optional[Any] = None
 
 
 async def claim_extractor_node(state: AgentState) -> Dict[str, Any]:
@@ -28,6 +27,7 @@ async def claim_extractor_node(state: AgentState) -> Dict[str, Any]:
     print(f"DEBUG: Entering claim_extractor_node for job_id='{job_id}'")
 
     try:
+        from app.agents.claim_extractor import extract_claims
         claims = await extract_claims(query=query, provider=provider)
         print(f"DEBUG: Exiting claim_extractor_node with {len(claims)} claims for job_id='{job_id}'")
         return {"claims": claims}
@@ -47,6 +47,7 @@ async def search_retriever_node(state: AgentState) -> Dict[str, Any]:
     print(f"DEBUG: Entering search_retriever_node for job_id='{job_id}' with {len(claims)} claims")
 
     try:
+        from app.agents.search_retriever import retrieve_and_index_evidence
         sources, faiss_index_id = await retrieve_and_index_evidence(job_id=job_id, claims=claims)
         print(f"DEBUG: Exiting search_retriever_node with {len(sources)} sources for job_id='{job_id}'")
         return {"sources": sources, "faiss_index_id": faiss_index_id}
@@ -92,6 +93,7 @@ async def contradiction_detector_node(state: AgentState) -> Dict[str, Any]:
     print(f"DEBUG: Entering contradiction_detector_node for job_id='{job_id}'")
 
     try:
+        from app.agents.contradiction_detector import detect_contradictions
         contradictions = await detect_contradictions(claims=claims, sources=sources, provider=provider)
         print(f"DEBUG: Exiting contradiction_detector_node with {len(contradictions)} contradictions for job_id='{job_id}'")
         return {"contradictions": contradictions}
@@ -115,6 +117,7 @@ async def report_generator_node(state: AgentState) -> Dict[str, Any]:
     print(f"DEBUG: Entering report_generator_node for job_id='{job_id}'")
 
     try:
+        from app.agents.report_generator import generate_report
         report_markdown = await generate_report(
             user_query=query,
             claims=claims,
@@ -160,15 +163,17 @@ def build_graph() -> StateGraph:
     return builder
 
 
-# Compile reusable executable graph instance
-print("DEBUG: Compiling LangGraph workflow...")
-workflow = build_graph()
-graph = workflow.compile()
-print("DEBUG: LangGraph workflow compiled successfully")
-
-
 def get_graph():
     """
-    Returns the compiled LangGraph execution graph instance.
+    Returns the compiled LangGraph execution graph instance with thread-safe lazy compilation.
     """
-    return graph
+    global _compiled_graph
+    if _compiled_graph is None:
+        with _graph_lock:
+            if _compiled_graph is None:
+                logger.info("Compiling LangGraph workflow lazily on first request...")
+                print("DEBUG: Compiling LangGraph workflow lazily...")
+                workflow = build_graph()
+                _compiled_graph = workflow.compile()
+                print("DEBUG: LangGraph workflow compiled successfully")
+    return _compiled_graph
