@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { X, Settings, Server, Check, Activity, Cpu } from "lucide-react";
 import { fetchHealthCheck } from "../api";
+import { API_BASE_URL } from "../api/client";
 import { useAnalysisContext } from "../context/AnalysisContext";
 
 interface SettingsModalProps {
@@ -60,7 +61,7 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
                 <Server className="w-4 h-4 text-[#06B6D4]" />
                 <div>
                   <p className="font-bold text-gray-900">FastAPI Backend (v1 API)</p>
-                  <p className="text-gray-500">http://localhost:8000/api/v1</p>
+                  <p className="text-gray-500 font-mono">{API_BASE_URL}/api/v1</p>
                 </div>
               </div>
               <span
