@@ -17,8 +17,8 @@ class AnalyzeRequest(BaseModel):
         examples=["Global renewable electricity share exceeded 30% in 2024."],
     )
     model_provider: Optional[str] = Field(
-        default=None,
-        description="Optional primary LLM provider override ('claude', 'openai', or 'gemini')",
+        default="groq",
+        description="Primary LLM provider override ('groq', 'openai', 'gemini', or 'claude')",
     )
 
     @field_validator("model_provider")
@@ -26,8 +26,8 @@ class AnalyzeRequest(BaseModel):
     def validate_model_provider(cls, v: Optional[str]) -> Optional[str]:
         if v is not None:
             v_clean = v.strip().lower()
-            if v_clean not in ("claude", "openai", "gemini"):
-                raise ValueError("model_provider must be one of: 'claude', 'openai', 'gemini'")
+            if v_clean not in ("groq", "openai", "gemini", "claude"):
+                raise ValueError("model_provider must be one of: 'groq', 'openai', 'gemini', 'claude'")
             return v_clean
         return v
 
