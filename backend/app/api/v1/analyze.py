@@ -8,7 +8,6 @@ import logging
 import uuid
 from fastapi import APIRouter, HTTPException, status
 
-from app.graph.builder import graph
 from app.graph.state import AgentState
 from app.schemas.analyze import AnalyzeRequest, AnalyzeResponse, AnalysisSummary
 from app.services.mongo_service import mongo_service
@@ -53,6 +52,8 @@ async def analyze_research_query(payload: AnalyzeRequest) -> AnalyzeResponse:
     print(f"DEBUG: Created initial_state for job_id='{job_id}'")
 
     try:
+        from app.graph.builder import get_graph
+        graph = get_graph()
         print(f"DEBUG: Invoking graph.ainvoke() for job_id='{job_id}'...")
         final_state: AgentState = await graph.ainvoke(initial_state)
         print(f"DEBUG: Completed graph.ainvoke() for job_id='{job_id}'")
