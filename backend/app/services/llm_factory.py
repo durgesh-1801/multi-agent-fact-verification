@@ -7,18 +7,19 @@ Configured via app.core.config.settings with lazy initialization, startup model 
 import asyncio
 from enum import Enum
 import logging
-from typing import Any, Dict, List, Optional, Tuple, Type, Union
+import threading
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple, Type, Union
 
 from pydantic import BaseModel
-from langchain_core.language_models.chat_models import BaseChatModel
-from langchain_anthropic import ChatAnthropic
-from langchain_google_genai import ChatGoogleGenerativeAI
-from langchain_openai import ChatOpenAI
-from langchain_groq import ChatGroq
+
+if TYPE_CHECKING:
+    from langchain_core.language_models.chat_models import BaseChatModel
 
 from app.core.config import settings
 
 logger = logging.getLogger(__name__)
+
+_llm_factory_lock = threading.Lock()
 
 
 class LLMProvider(str, Enum):
@@ -67,11 +68,13 @@ class LLMFactory:
 
     def __new__(cls) -> "LLMFactory":
         if cls._instance is None:
-            cls._instance = super().__new__(cls)
-            cls._instance._active_groq_model = None
-            cls._instance._active_openai_model = None
-            cls._instance._active_gemini_model = None
-            cls._instance._validated_gemini_models = []
+            with _llm_factory_lock:
+                if cls._instance is None:
+                    cls._instance = super().__new__(cls)
+                    cls._instance._active_groq_model = None
+                    cls._instance._active_openai_model = None
+                    cls._instance._active_gemini_model = None
+                    cls._instance._validated_gemini_models = []
         return cls._instance
 
     def get_active_groq_model(self) -> str:
@@ -183,10 +186,12 @@ class LLMFactory:
         model_name: Optional[str] = None,
         temperature: float = 0.0,
         streaming: bool = False,
-    ) -> ChatGroq:
+    ) -> Any:
         """
         Instantiates ChatGroq using GROQ_MODEL and GROQ_API_KEY.
         """
+        from langchain_groq import ChatGroq
+
         selected_model = model_name or self.get_active_groq_model()
         api_key = settings.groq_api_key_str
         if not api_key:
@@ -208,7 +213,7 @@ class LLMFactory:
         model_name: Optional[str] = None,
         temperature: float = 0.0,
         streaming: bool = False,
-    ) -> ChatOpenAI:
+    ) -> Any:
         """
         Instantiates ChatOpenAI using OPENAI_MODEL and OPENAI_API_KEY.
         """
@@ -216,6 +221,8 @@ class LLMFactory:
             raise RuntimeError(
                 "ASSERTION FAILURE: ChatOpenAI instantiation was attempted while LLM_PROVIDER is configured to 'groq'!"
             )
+
+        from langchain_openai import ChatOpenAI
 
         selected_model = model_name or self.get_active_openai_model()
         api_key = settings.openai_api_key_str
@@ -238,7 +245,9 @@ class LLMFactory:
         model_name: Optional[str] = None,
         temperature: float = 0.0,
         streaming: bool = False,
-    ) -> ChatAnthropic:
+    ) -> Any:
+        from langchain_anthropic import ChatAnthropic
+
         selected_model = model_name or settings.CLAUDE_MODEL_NAME
         api_key = settings.anthropic_api_key_str
         if not api_key:
@@ -256,11 +265,13 @@ class LLMFactory:
         model_name: Optional[str] = None,
         temperature: float = 0.0,
         streaming: bool = False,
-    ) -> ChatGoogleGenerativeAI:
+    ) -> Any:
         if settings.effective_provider in ("groq", "openai"):
             raise RuntimeError(
                 f"ASSERTION FAILURE: ChatGoogleGenerativeAI instantiation was attempted while LLM_PROVIDER is configured to '{settings.effective_provider}'!"
             )
+
+        from langchain_google_genai import ChatGoogleGenerativeAI
 
         api_key = settings.google_api_key_str
         if not api_key:
@@ -283,7 +294,7 @@ class LLMFactory:
         provider: Optional[str] = None,
         temperature: float = 0.0,
         streaming: bool = False,
-    ) -> BaseChatModel:
+    ) -> Any:
         """
         Returns raw base ChatModel without retry wrapper.
         """
@@ -383,7 +394,7 @@ class ResilientLLM:
         self.streaming = streaming
         self.factory = factory or llm_factory
 
-    def _get_model_instance(self) -> BaseChatModel:
+    def _get_model_instance(self) -> Any:
         return self.factory.get_raw_llm(
             provider=self.provider,
             temperature=self.temperature,
